@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Graph Studio · Knowledge workspace</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Crect width='40' height='40' rx='10' fill='%230f766e'/%3E%3Ctext x='10' y='29' font-size='27' fill='white'%3EG%3C/text%3E%3C/svg%3E">
+  <link rel="stylesheet" href="/static/styles.css">
+  <script type="module" src="/static/app.js"></script>
+</head>
+<body>
+  <aside class="sidebar">
+    <a class="brand" href="/"><span class="brand-icon">G<span>·</span></span><span>Graph Studio<small>KNOWLEDGE WORKSPACE</small></span></a>
+    <fieldset id="sidebar-fields">
+      <div class="sidebar-heading">YOUR GRAPHS <span id="graph-count">0</span></div>
+      <button id="new-graph" class="new-graph">＋ New graph</button>
+      <nav id="graph-list" aria-label="Graphs"></nav>
+    </fieldset>
+    <div class="sidebar-footer"><span class="online-dot"></span> Local workspace<small>Powered by Kùzu<br>Your saved data stays on this machine.</small></div>
+  </aside>
+
+  <main>
+    <div class="topline"><span>Workspace <span class="slash">/</span> <span id="breadcrumb">Getting started</span></span><span class="local-badge">KÙZU DATABASE</span></div>
+    <div id="notice" role="status" aria-live="polite" hidden></div>
+    <section id="welcome" class="welcome" hidden>
+      <div class="welcome-art">○──○<br> ╲ │<br> ○</div>
+      <span class="eyebrow">FROM INFORMATION TO CONNECTIONS</span>
+      <h1>Your knowledge, connected.</h1>
+      <p>Create a graph, define its structure, and bring your ideas to life.<br>Explore the connections with local semantic search.</p>
+      <button id="first-graph" class="primary">＋ Create your first graph</button>
+      <div class="welcome-steps"><span>01 · Define types</span><span>02 · Add knowledge</span><span>03 · Discover connections</span></div>
+    </section>
+
+    <fieldset id="workspace-fields" hidden>
+      <header class="page-header">
+        <div><span class="eyebrow">KNOWLEDGE GRAPH</span><h1 id="graph-title"></h1><p>Give your knowledge structure. Make every connection count.</p></div>
+        <div class="save-area"><span id="save-status" class="status-pill">Saved</span><button id="save" class="primary">Save changes</button></div>
+      </header>
+      <div class="tabs" role="tablist" aria-label="Workspace sections">
+        <button id="creation-tab" class="tab active" role="tab" aria-selected="true" aria-controls="creation-page">◇ Creation</button>
+        <button id="search-tab" class="tab" role="tab" aria-selected="false" aria-controls="search-page">⌕ Search & discover</button>
+        <span id="graph-summary"></span>
+      </div>
+
+      <section id="creation-page" role="tabpanel" aria-labelledby="creation-tab">
+        <div class="graph-settings"><label>Graph name <input id="graph-name" maxlength="120" required></label><button id="reload" class="subtle">Reload saved data</button><button id="delete-graph" class="danger-text">Delete graph</button></div>
+        <div class="creation-grid">
+          <div class="builder">
+            <section class="card">
+              <div class="section-heading"><span class="step">01</span><div><h2>Node types</h2><p>Define the kinds of things in your graph.</p></div></div>
+              <form id="node-type-form"><label for="type-name">Node type name</label><div class="input-action"><input id="type-name" placeholder="e.g. Person, Company, Research paper" maxlength="120" required><button class="secondary" type="submit">Add type</button></div></form>
+              <div id="node-types" class="chips"></div>
+            </section>
+            <section class="card">
+              <div class="section-heading"><span class="step">02</span><div><h2>Relationship definitions</h2><p>Choose which node types can connect.</p></div></div>
+              <form id="rel-type-form" class="stack">
+                <label>Relationship name<input id="rel-name" placeholder="e.g. WORKS_AT, AUTHORED, KNOWS" maxlength="120" required></label>
+                <div class="two-cols"><label>From node type<select id="rel-from" required></select></label><label>To node type<select id="rel-to" required></select></label></div>
+                <button class="secondary" type="submit">＋ Add relationship definition</button>
+              </form>
+              <div id="rel-types" class="definition-list"></div>
+            </section>
+            <section class="card">
+              <div class="section-heading"><span class="step">03</span><div><h2>Node creation</h2><p>A unique UUID is generated for every node.</p></div></div>
+              <form id="node-form" class="stack">
+                <label>Node type<select id="node-type" required></select></label>
+                <label>Node name<input id="node-name" placeholder="e.g. Ada Lovelace" maxlength="120" required></label>
+                <label>Description <span class="optional">optional</span><textarea id="node-description" placeholder="Add context to improve semantic search…" maxlength="10000" rows="3"></textarea></label>
+                <button class="secondary" type="submit">＋ Create node</button>
+              </form>
+            </section>
+            <section class="card">
+              <div class="section-heading"><span class="step">04</span><div><h2>Relationship mapping</h2><p>Connect nodes using a relationship definition.</p></div></div>
+              <form id="mapping-form" class="stack">
+                <label>Relationship<select id="mapping-type" required></select></label>
+                <label>From node<input id="mapping-from" list="from-options" placeholder="Find by node name or UUID" autocomplete="off" required></label>
+                <label>To node<input id="mapping-to" list="to-options" placeholder="Find by node name or UUID" autocomplete="off" required></label>
+                <datalist id="from-options"></datalist><datalist id="to-options"></datalist>
+                <p id="mapping-hint" class="hint">Create a relationship definition to get started.</p>
+                <div class="button-row"><button id="mapping-submit" class="secondary" type="submit">＋ Connect nodes</button><button id="mapping-cancel" type="button" class="subtle" hidden>Cancel edit</button></div>
+              </form>
+            </section>
+            <section class="card" id="edit-section">
+              <div class="section-heading"><span class="edit-icon">↗</span><div><h2>Update & delete</h2><p>Select a node or connection to make changes.</p></div></div>
+              <form id="edit-node-form" class="stack">
+                <label>Find node by name or UUID<input id="edit-node-lookup" list="all-node-options" placeholder="Type a name or paste a UUID" autocomplete="off"></label>
+                <datalist id="all-node-options"></datalist>
+                <button id="load-node" type="button" class="subtle">Load node</button>
+                <div id="node-editor" class="stack" hidden>
+                  <div class="uuid-box" id="edit-node-id"></div>
+                  <label>Node type<select id="edit-node-type" required></select></label>
+                  <label>Node name<input id="edit-node-name" maxlength="120" required></label>
+                  <label>Description<textarea id="edit-node-description" maxlength="10000" rows="3"></textarea></label>
+                  <div class="button-row"><button class="secondary" type="submit">Update node</button><button id="delete-node" type="button" class="danger-text">Delete node</button></div>
+                </div>
+              </form>
+              <hr>
+              <label>Existing relationship<select id="edit-edge"></select></label>
+              <div class="button-row space-top"><button id="load-edge" class="subtle">Edit mapping</button><button id="delete-edge" class="danger-text">Delete relationship</button></div>
+            </section>
+          </div>
+
+          <div class="visual-column">
+            <section class="card visualization">
+              <div class="visual-heading"><div><span class="eyebrow">LIVE CANVAS</span><h2>Your graph, taking shape</h2></div><span class="live-pill"><span class="online-dot"></span> Live</span></div>
+              <div class="canvas-toolbar"><input id="canvas-find" aria-label="Find in visualization" placeholder="⌕ Highlight by name or UUID"><button id="fit" class="icon-button" title="Fit graph">Fit</button><button id="layout" class="icon-button" title="Reset layout">Layout</button><button id="zoom-out" class="icon-button" aria-label="Zoom out">−</button><button id="zoom-in" class="icon-button" aria-label="Zoom in">＋</button></div>
+              <div class="canvas-wrap"><svg id="graph-canvas" role="img" aria-label="Interactive knowledge graph visualization"></svg><div id="canvas-empty" class="canvas-empty"><div>◇</div><h3>A little structure. Endless possibilities.</h3><p>Add your first node to start connecting the dots.</p></div></div>
+              <div id="legend" class="legend"></div>
+              <div class="canvas-footer">Drag nodes to arrange · Scroll to zoom · Drag background to pan · Click to inspect</div>
+            </section>
+            <section class="card inspector"><div class="section-heading"><span class="edit-icon">◎</span><div><h2>Selection details</h2><p>Click a node or relationship on the canvas.</p></div></div><div id="inspector-content" class="muted">Nothing selected yet. Your connections will appear here.</div></section>
+            <div class="save-note"><span>↳</span><p><strong>A canvas for your ideas.</strong> Edits are browser drafts until you save. Saved graphs, UUIDs, and relationships are kept in Kùzu across restarts.</p></div>
+          </div>
+        </div>
+      </section>
+
+      <section id="search-page" role="tabpanel" aria-labelledby="search-tab" hidden>
+        <div class="search-intro"><span class="eyebrow">EXPLORE YOUR KNOWLEDGE</span><h2>Find meaning. Follow connections.</h2><p>Search saved nodes by name, UUID, or meaning, then explore their relationships.</p></div>
+        <section class="card search-card">
+          <form id="search-form" class="stack">
+            <label for="search-query">What are you looking for?</label>
+            <div class="search-input"><input id="search-query" placeholder="e.g. people working on renewable energy" maxlength="2000" required><button id="search-submit" class="primary" type="submit">Search graph →</button></div>
+            <div class="search-options"><label>Search method<select id="search-mode"><option value="hybrid">Hybrid · meaning + keywords</option><option value="semantic">Semantic · vector similarity</option><option value="keyword">Keyword · name, UUID & text</option></select></label><label>Node type<select id="search-type"></select></label><label>Results<input id="search-limit" type="number" value="10" min="1" max="100" required></label></div>
+            <p class="hint">Semantic search uses local 384-dimensional embeddings and cosine similarity in Kùzu. The first semantic search downloads the model. Hybrid combines semantic and keyword rankings.</p>
+          </form>
+        </section>
+        <div id="search-draft-warning" class="draft-warning" hidden>You have unsaved changes. Search uses the last saved version of this graph.</div>
+        <div id="search-status" class="results-heading" role="status">Your next discovery starts with a question.</div>
+        <div id="search-results" class="search-results"></div>
+      </section>
+    </fieldset>
+    <footer class="page-footer">GRAPH STUDIO <span>Built for connected thinking.</span></footer>
+  </main>
+
+  <dialog id="graph-dialog"><form id="graph-form" class="stack"><span class="eyebrow">A NEW BEGINNING</span><h2>Create a knowledge graph</h2><p>Give this collection of knowledge a name.</p><label>Graph name<input id="new-graph-name" maxlength="120" placeholder="e.g. Research network" required></label><p id="dialog-error" class="error-text" role="alert"></p><div class="button-row"><button class="primary" type="submit">Create graph</button><button id="cancel-graph" class="subtle" type="button">Cancel</button></div></form></dialog>
+</body>
+</html>
