@@ -4,6 +4,34 @@ const $ = id => document.getElementById(id);
 const escape = value => String(value ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
 const uuid = () => crypto.randomUUID();
 const state = { graphs: [], graph: null, saved: null, dirty: false, busy: false, editedNode: null, editedEdge: null, selection: null, search: null };
+const searchCopy = {
+  vector: {
+    queryLabel: 'What node name or idea are you looking for?',
+    placeholder: 'e.g. renewable energy researchers',
+    button: 'Search nodes →',
+    idle: 'Vector search ranks saved nodes by their name embeddings.',
+    progress: 'Searching node-name embeddings… The local BGE model may download on first use.',
+    help: 'Vector search embeds node names using the configured local model (default: BAAI/bge-small-en-v1.5, 384 dimensions). The model downloads once if missing. Higher cosine similarity is better; distance = 1 − similarity, so lower distance is better.',
+    score: 'cosine similarity',
+  },
+  semantic: {
+    queryLabel: 'Which words should match a node name?',
+    placeholder: 'e.g. solar scientist',
+    button: 'Search nodes →',
+    idle: 'Semantic search compares words and tokens in saved node names.',
+    progress: 'Comparing words and tokens in saved node names…',
+    help: 'Semantic here means word-to-word name matching, not embeddings. Matching ignores case and punctuation. A weighted Dice score (0–1) counts exact words fully and substring matches partially; higher is better. No model is needed.',
+    score: 'name similarity score',
+  },
+  cypher: {
+    queryLabel: 'Read-only Cypher query',
+    placeholder: 'MATCH (n:Entity) RETURN n.id, n.name LIMIT 10',
+    button: 'Run query →',
+    idle: 'Run a read-only Cypher query against the saved graph.',
+    progress: 'Running read-only Cypher query…',
+    help: 'Read-only Cypher searches only the selected saved graph. Filter by node name, node UUID, or relationship name; results also include node descriptions. Up to 100 rows are shown. Unsupported queries and database errors appear below.',
+  },
+};
 const canvas = new GraphCanvas($('graph-canvas'), (kind, id) => { state.selection = { kind, id }; renderInspector(); });
 const draftKey = id => `graph-studio:draft:${id}`;
 let noticeTimer;
@@ -17,11 +45,19 @@ function notify(message, error = false, persistent = false) {
 }
 
 async function api(path, options = {}) {
-  const response = await fetch(`/api${path}`, { ...options, headers: { 'Content-Type': 'application/json', ...options.headers } });
+  let response;
+  try { response = await fetch(`/api${path}`, { ...options, headers: { 'Content-Type': 'application/json', ...options.headers } }); }
+  catch { throw new Error('Could not reach Graph Studio. Check that the server is running and retry.'); }
   if (response.status === 204) return null;
-  const body = await response.json();
+  const text = await response.text();
+  let body = null;
+  try { body = text ? JSON.parse(text) : null; }
+  catch {
+    if (response.ok) throw new Error('The server returned an invalid response. Please retry.');
+    body = { detail: text || `Request failed (${response.status}).` };
+  }
   if (!response.ok) {
-    const detail = Array.isArray(body.detail) ? body.detail.map(item => item.msg).join(' ') : body.detail;
+    const detail = Array.isArray(body?.detail) ? body.detail.map(item => typeof item === 'object' ? item.msg : item).filter(Boolean).join(' ') : body?.detail;
     throw new Error(detail || `Request failed (${response.status}).`);
   }
   return body;
@@ -74,6 +110,37 @@ function setOptions(id, items, empty = 'Choose…') {
   else if (items.length === 1 && !['search-type', 'edit-edge'].includes(id)) element.value = items[0].id;
 }
 
+function clearSearchError() {
+  const error = $('search-error');
+  error.textContent = '';
+  error.hidden = true;
+}
+
+function showSearchError(message) {
+  const error = $('search-error');
+  error.textContent = message || 'The search could not be completed.';
+  error.hidden = false;
+}
+
+function updateSearchMode() {
+  const mode = $('search-mode').value;
+  const copy = searchCopy[mode] || searchCopy.vector;
+  const cypher = mode === 'cypher';
+  $('search-query-label').textContent = copy.queryLabel;
+  $('search-query').placeholder = copy.placeholder;
+  $('search-query').rows = cypher ? 7 : 2;
+  $('search-query').setAttribute('aria-label', copy.queryLabel);
+  $('search-submit').textContent = copy.button;
+  $('search-help').textContent = copy.help;
+  $('search-type-field').hidden = cypher;
+  $('search-limit-field').hidden = cypher;
+  $('search-limit').required = !cypher;
+  $('search-limit').disabled = cypher;
+  $('search-cypher-help').hidden = !cypher;
+  $('search-options').classList.toggle('cypher-mode', cypher);
+  if (!state.search) $('search-status').textContent = copy.idle;
+}
+
 function nodeLabel(node) { return `${node.name} — ${node.id}`; }
 function nodeOptions(id, nodes) { $(id).replaceChildren(...nodes.map(node => new Option(nodeLabel(node), nodeLabel(node)))); }
 function nodeTypeName(id, graph = state.graph) { return graph.node_types.find(type => type.id === id)?.name || 'Unknown type'; }
@@ -113,6 +180,7 @@ function renderMapping() {
 
 function render() {
   renderSidebar();
+  updateSearchMode();
   $('welcome').hidden = Boolean(state.graph);
   $('workspace-fields').hidden = !state.graph;
   if (!state.graph) { $('breadcrumb').textContent = 'Getting started'; return; }
@@ -140,8 +208,10 @@ function render() {
   renderInspector();
   setOptions('search-type', state.saved.node_types, 'All node types');
   if (!state.search) {
+    clearSearchError();
     $('search-results').replaceChildren();
-    $('search-status').textContent = 'Your next discovery starts with a question. Search uses saved graph data.';
+    $('search-results').classList.remove('cypher-results');
+    $('search-status').textContent = searchCopy[$('search-mode').value]?.idle || 'Search uses saved graph data.';
   }
 }
 
@@ -425,23 +495,237 @@ $('layout').onclick = () => canvas.layout();
 $('zoom-in').onclick = () => canvas.zoom(1.25);
 $('zoom-out').onclick = () => canvas.zoom(.8);
 
+function resultId(node) { return node?.id ?? node?.uuid ?? node?.node_id ?? ''; }
+function resultName(node) { return node?.name ?? node?.node_name ?? node?.label ?? 'Unnamed node'; }
+function scoreText(score, mode) {
+  const value = Number(score);
+  return Number.isFinite(value) ? value.toFixed(mode === 'vector' ? 4 : 3) : '—';
+}
+
+function showSearchMessage(message) {
+  const container = $('search-results');
+  container.classList.remove('cypher-results');
+  container.replaceChildren();
+  const empty = document.createElement('div');
+  empty.className = 'card muted';
+  empty.textContent = message;
+  container.append(empty);
+}
+
+function renderNodeResults(response, mode) {
+  const results = Array.isArray(response?.results) ? response.results : [];
+  const container = $('search-results');
+  container.classList.remove('cypher-results');
+  container.replaceChildren();
+  if (!results.length) {
+    showSearchMessage('No nodes matched. Try a different name or node type, and make sure your graph is saved.');
+    return;
+  }
+
+  const copy = searchCopy[mode] || searchCopy.vector;
+  for (const node of results) {
+    const article = document.createElement('article');
+    article.className = 'card result';
+
+    const heading = document.createElement('div');
+    heading.className = 'result-heading';
+    const title = document.createElement('div');
+    const name = document.createElement('h3');
+    name.textContent = resultName(node);
+    title.append(name);
+    if (node?.type_name || node?.type) {
+      const type = document.createElement('div');
+      type.className = 'type-label';
+      type.textContent = node.type_name ?? node.type;
+      title.append(type);
+    }
+    const score = document.createElement('span');
+    score.className = 'result-score';
+    score.title = copy.score;
+    score.setAttribute('aria-label', `${copy.score}: ${scoreText(node?.score, mode)}`);
+    score.textContent = scoreText(node?.score, mode);
+    heading.append(title, score);
+    article.append(heading);
+    if (mode === 'vector' && Number.isFinite(node.distance)) {
+      const distance = document.createElement('small');
+      distance.className = 'result-distance hint';
+      distance.textContent = `Cosine distance: ${node.distance.toFixed(4)}`;
+      article.append(distance);
+    }
+
+    const identifier = document.createElement('div');
+    identifier.className = 'uuid-box';
+    identifier.textContent = resultId(node) || 'UUID unavailable';
+    article.append(identifier);
+
+    const description = document.createElement('p');
+    description.textContent = node?.description || 'No description.';
+    article.append(description);
+
+    const connections = Array.isArray(node?.connections) ? node.connections : [];
+    const connectionList = document.createElement('div');
+    connectionList.className = 'result-connections';
+    const connectionCount = document.createElement('strong');
+    connectionCount.textContent = `${connections.length} connection${connections.length === 1 ? '' : 's'}`;
+    connectionList.append(connectionCount);
+    for (const edge of connections) {
+      const row = document.createElement('div');
+      row.className = 'connection-row';
+      row.append(document.createTextNode(`${edge?.source_name ?? ''} `));
+      const relationship = document.createElement('span');
+      relationship.className = 'chip';
+      relationship.textContent = edge?.relationship ?? 'relationship';
+      row.append(relationship, document.createTextNode(` → ${edge?.target_name ?? ''}`));
+      connectionList.append(row);
+    }
+    article.append(connectionList);
+
+    const id = resultId(node);
+    if (id) {
+      const open = document.createElement('button');
+      open.className = 'subtle';
+      open.type = 'button';
+      open.dataset.action = 'result-node';
+      open.dataset.id = id;
+      open.textContent = 'Open in creation →';
+      article.append(open);
+    }
+    container.append(article);
+  }
+}
+
+function cypherRows(response) {
+  if (Array.isArray(response?.rows)) return response.rows;
+  if (Array.isArray(response?.results)) return response.results;
+  if (Array.isArray(response?.data)) return response.data;
+  return [];
+}
+
+function cypherColumnName(column, index) {
+  if (column && typeof column === 'object') return String(column.name ?? column.id ?? `Column ${index + 1}`);
+  return String(column ?? `Column ${index + 1}`);
+}
+
+function cypherColumns(response, rows) {
+  const declared = Array.isArray(response?.columns) ? response.columns : (Array.isArray(response?.fields) ? response.fields : []);
+  if (declared.length) return declared.map(cypherColumnName);
+  const objectRow = rows.find(row => row && typeof row === 'object' && !Array.isArray(row));
+  if (objectRow) return Object.keys(objectRow);
+  const width = rows.reduce((largest, row) => Math.max(largest, Array.isArray(row) ? row.length : 1), 0);
+  return Array.from({ length: width }, (_, index) => `Column ${index + 1}`);
+}
+
+function cellText(value) {
+  if (value === null || value === undefined) return 'NULL';
+  if (typeof value === 'object') {
+    try { return JSON.stringify(value); } catch { return '[unserializable value]'; }
+  }
+  return String(value);
+}
+
+function responseError(response) {
+  const value = response?.error ?? response?.detail ?? response?.errors;
+  if (!value || (Array.isArray(value) && !value.length)) return '';
+  return Array.isArray(value) ? value.map(cellText).join(' ') : cellText(value);
+}
+
+function renderCypherResults(response) {
+  const allRows = cypherRows(response);
+  const rows = allRows.slice(0, 100);
+  const container = $('search-results');
+  container.classList.add('cypher-results');
+  container.replaceChildren();
+  if (!allRows.length) {
+    showSearchMessage('Cypher returned no rows.');
+    return { shown: 0, total: 0 };
+  }
+
+  const columns = cypherColumns(response, allRows);
+  const wrapper = document.createElement('div');
+  wrapper.className = 'cypher-table-wrap card';
+  const table = document.createElement('table');
+  table.className = 'cypher-table';
+  const caption = document.createElement('caption');
+  caption.textContent = 'Cypher query results';
+  table.append(caption);
+  const head = document.createElement('thead');
+  const headerRow = document.createElement('tr');
+  for (const column of columns) {
+    const header = document.createElement('th');
+    header.scope = 'col';
+    header.textContent = column;
+    headerRow.append(header);
+  }
+  head.append(headerRow);
+  table.append(head);
+
+  const body = document.createElement('tbody');
+  for (const row of rows) {
+    const tableRow = document.createElement('tr');
+    const values = Array.isArray(row)
+      ? row
+      : columns.map(column => row && typeof row === 'object' ? row[column] : row);
+    columns.forEach((_, index) => {
+      const cell = document.createElement('td');
+      cell.textContent = cellText(values[index]);
+      tableRow.append(cell);
+    });
+    body.append(tableRow);
+  }
+  table.append(body);
+  wrapper.append(table);
+  container.append(wrapper);
+  return { shown: rows.length, total: allRows.length };
+}
+
+$('search-mode').onchange = () => {
+  state.search = null;
+  $('search-results').replaceChildren();
+  $('search-results').classList.remove('cypher-results');
+  clearSearchError();
+  updateSearchMode();
+};
+
 $('search-form').onsubmit = event => {
   event.preventDefault();
   busy(async () => {
     const mode = $('search-mode').value;
+    const copy = searchCopy[mode] || searchCopy.vector;
+    const query = $('search-query').value.trim();
+    const limit = Number($('search-limit').value);
+    const request = { query, mode, limit: mode === 'cypher' ? 100 : limit };
+    if (mode !== 'cypher') request.node_type_id = $('search-type').value || null;
+    state.search = null;
+    clearSearchError();
     $('search-submit').textContent = 'Searching…';
     $('search-results').replaceChildren();
-    $('search-status').textContent = mode === 'keyword' ? 'Searching Kùzu…' : 'Preparing local embeddings and searching Kùzu… The first model download may take a few minutes.';
+    $('search-results').classList.toggle('cypher-results', mode === 'cypher');
+    $('search-status').textContent = copy.progress;
     try {
-      const response = await api(`/graphs/${state.graph.id}/search`, { method: 'POST', body: JSON.stringify({ query: $('search-query').value.trim(), mode, limit: Number($('search-limit').value), node_type_id: $('search-type').value || null }) });
-      state.search = response;
-      const label = { semantic: 'cosine similarity', keyword: 'keyword relevance', hybrid: 'hybrid RRF score' }[mode];
-      $('search-status').textContent = `${response.results.length} result${response.results.length === 1 ? '' : 's'} · Saved revision ${response.revision} · Ranked by ${label}${response.indexed_nodes ? ` · ${response.indexed_nodes} node embeddings refreshed` : ''}`;
-      $('search-results').innerHTML = response.results.map(node => `<article class="card result"><div class="result-heading"><div><h3>${escape(node.name)}</h3><div class="type-label">${escape(node.type_name)}</div></div><span class="result-score" title="${label}">${node.score.toFixed(mode === 'hybrid' ? 4 : 3)}</span></div><div class="uuid-box">${node.id}</div><p>${escape(node.description || 'No description.')}</p><div class="result-connections"><strong>${node.connections.length} connection${node.connections.length === 1 ? '' : 's'}</strong>${node.connections.map(edge => `<div class="connection-row">${escape(edge.source_name)} <span class="chip">${escape(edge.relationship)}</span> → ${escape(edge.target_name)}</div>`).join('')}</div><button class="subtle" data-action="result-node" data-id="${node.id}">Open in creation →</button></article>`).join('');
-      if (!response.results.length) $('search-results').innerHTML = '<div class="card muted">No nodes matched. Try a different query or node type, and make sure your graph is saved.</div>';
+      if (!query) throw new Error('Enter a search query.');
+      if (mode !== 'cypher' && (!Number.isInteger(limit) || limit < 1 || limit > 100)) throw new Error('Choose a result limit from 1 to 100.');
+      const response = await api(`/graphs/${state.graph.id}/search`, { method: 'POST', body: JSON.stringify(request) });
+      const backendError = mode === 'cypher' ? responseError(response) : '';
+      if (backendError) throw new Error(backendError);
+      if (mode === 'cypher' ? !Array.isArray(response?.columns) || !Array.isArray(response?.rows) : !Array.isArray(response?.results)) throw new Error('The server returned invalid search results. Please retry.');
+      state.search = { ...(response || {}), mode };
+      if (mode === 'cypher') {
+        const summary = renderCypherResults(response || {});
+        const truncated = response.truncated ? ` · Output limited to ${response.row_limit} rows; refine the query to see other matches` : '';
+        const revision = response?.revision === undefined ? '' : ` · Saved revision ${response.revision}`;
+        $('search-status').textContent = `${summary.shown} row${summary.shown === 1 ? '' : 's'}${revision}${truncated}`;
+      } else {
+        const count = Array.isArray(response?.results) ? response.results.length : 0;
+        renderNodeResults(response || {}, mode);
+        const revision = response?.revision === undefined ? 'saved graph' : `saved revision ${response.revision}`;
+        const indexed = response?.indexed_nodes ? ` · ${response.indexed_nodes} node embeddings refreshed` : '';
+        $('search-status').textContent = `${count} result${count === 1 ? '' : 's'} · ${revision} · Ranked by ${copy.score}${indexed}`;
+      }
     } catch (error) {
-      $('search-status').textContent = 'Search could not complete. Your saved graph is unchanged.'; throw error;
-    } finally { $('search-submit').textContent = 'Search graph →'; }
+      $('search-status').textContent = mode === 'cypher' ? 'Cypher query failed. Your saved graph is unchanged.' : 'Search could not complete. Your saved graph is unchanged.';
+      showSearchError(error.message);
+      throw error;
+    } finally { $('search-submit').textContent = copy.button; }
   });
 };
 

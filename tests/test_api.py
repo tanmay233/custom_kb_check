@@ -20,6 +20,7 @@ class TestEmbeddings:
 
     def __init__(self):
         self.document_calls = 0
+        self.document_texts = []
 
     def vector(self, text):
         axis = 0 if any(word in text.lower() for word in ("energy", "solar", "climate")) else 1
@@ -27,6 +28,7 @@ class TestEmbeddings:
 
     def documents(self, texts):
         self.document_calls += len(texts)
+        self.document_texts.extend(texts)
         return [self.vector(text) for text in texts]
 
     def query(self, text):
@@ -133,41 +135,51 @@ def test_transaction_failure_rolls_back(environment, monkeypatch):
     assert client.get(f"/api/graphs/{graph_id}").json() == before
 
 
-def test_keyword_uuid_semantic_hybrid_filter_and_index_invalidation(environment):
+def test_vector_name_ranking_filter_and_index_invalidation(environment):
     client, embeddings, _ = environment
-    graph_id, data = saved_graph(client)
+    data = draft()
+    data["nodes"][0]["name"] = "Solar researcher"
+    graph_id, data = saved_graph(client, data)
     other_id, other = saved_graph(client, draft("Other"))
     url = f"/api/graphs/{graph_id}/search"
-    response = client.post(url, json={"query": data["nodes"][0]["id"], "mode": "keyword"})
+    response = client.post(url, json={"query": "solar", "mode": "semantic"})
     assert response.status_code == 200, response.text
-    assert response.json()["results"][0]["name"] == "Alice"
+    assert response.json()["results"][0]["name"] == "Solar researcher"
     assert response.json()["results"][0]["connections"][0]["relationship"] == "WORKS_AT"
     assert embeddings.document_calls == 0
-    response = client.post(url, json={"query": "energy", "mode": "semantic", "node_type_id": data["node_types"][0]["id"]})
+    response = client.post(url, json={"query": "energy", "mode": "vector", "node_type_id": data["node_types"][0]["id"]})
     assert response.status_code == 200, response.text
     results = response.json()["results"]
-    assert [node["name"] for node in results] == ["Alice", "Bob"]
+    assert [node["name"] for node in results] == ["Solar researcher", "Bob"]
     assert results[0]["score"] > .99
+    assert results[0]["distance"] == pytest.approx(0, abs=1e-5)
     assert embeddings.document_calls == 2
+    assert set(embeddings.document_texts) == {"Solar researcher", "Bob"}
     assert not set(node["id"] for node in results).intersection(node["id"] for node in other["nodes"])
-    repeat = client.post(url, json={"query": "energy", "mode": "hybrid", "node_type_id": data["node_types"][0]["id"]})
+    repeat = client.post(url, json={"query": "energy", "mode": "vector", "node_type_id": data["node_types"][0]["id"]})
     assert repeat.status_code == 200, repeat.text
-    assert repeat.json()["results"][0]["name"] == "Alice"
+    assert repeat.json()["results"][0]["name"] == "Solar researcher"
     assert embeddings.document_calls == 2
     # Saving an unchanged graph preserves cached embeddings.
     response = client.put(f"/api/graphs/{graph_id}", json=data)
     assert response.status_code == 200, response.text
     data["revision"] += 1
-    client.post(url, json={"query": "energy", "mode": "semantic", "node_type_id": data["node_types"][0]["id"]})
+    client.post(url, json={"query": "energy", "mode": "vector", "node_type_id": data["node_types"][0]["id"]})
     assert embeddings.document_calls == 2
     data["nodes"][0]["description"] = "Writes novels"
+    data["node_types"][0]["name"] = "Author"
     assert client.put(f"/api/graphs/{graph_id}", json=data).status_code == 200
-    client.post(url, json={"query": "energy", "mode": "semantic", "node_type_id": data["node_types"][0]["id"]})
+    data["revision"] += 1
+    client.post(url, json={"query": "energy", "mode": "vector", "node_type_id": data["node_types"][0]["id"]})
+    assert embeddings.document_calls == 2  # Descriptions/type names are not embedded.
+    data["nodes"][0]["name"] = "History author"
+    assert client.put(f"/api/graphs/{graph_id}", json=data).status_code == 200
+    client.post(url, json={"query": "energy", "mode": "vector", "node_type_id": data["node_types"][0]["id"]})
     assert embeddings.document_calls == 3
     assert client.post(url, json={"query": "energy", "node_type_id": other["node_types"][0]["id"]}).status_code == 422
 
 
-def test_empty_graph_and_model_failure_do_not_break_keyword_search(environment, monkeypatch):
+def test_empty_graph_and_model_failure_do_not_break_other_searches(environment, monkeypatch):
     client, embeddings, _ = environment
     empty = client.post("/api/graphs", json={"name": "Empty"}).json()["id"]
     assert client.post(f"/api/graphs/{empty}/search", json={"query": "anything"}).json()["results"] == []
@@ -178,8 +190,9 @@ def test_empty_graph_and_model_failure_do_not_break_keyword_search(environment, 
 
     monkeypatch.setattr(embeddings, "documents", unavailable)
     url = f"/api/graphs/{graph_id}/search"
-    assert client.post(url, json={"query": "energy", "mode": "semantic"}).status_code == 503
-    assert client.post(url, json={"query": "Alice", "mode": "keyword"}).json()["results"][0]["name"] == "Alice"
+    assert client.post(url, json={"query": "energy", "mode": "vector"}).status_code == 503
+    assert client.post(url, json={"query": "Alice", "mode": "semantic"}).json()["results"][0]["name"] == "Alice"
+    assert client.post(url, json={"query": "MATCH (n) RETURN n.name", "mode": "cypher"}).status_code == 200
     assert client.get(f"/api/graphs/{graph_id}").json()["revision"] == 1
 
 
@@ -191,6 +204,6 @@ def test_duplicate_node_names_and_self_relationship(environment):
     data["relationship_types"].append(relation)
     data["edges"].append({"id": uid(), "type_id": relation["id"], "source_id": data["nodes"][0]["id"], "target_id": data["nodes"][0]["id"]})
     graph_id, data = saved_graph(client, data)
-    results = client.post(f"/api/graphs/{graph_id}/search", json={"query": "Alice", "mode": "keyword"}).json()["results"]
+    results = client.post(f"/api/graphs/{graph_id}/search", json={"query": "Alice", "mode": "semantic"}).json()["results"]
     assert len(results) == 2
     assert len({node["id"] for node in results}) == 2

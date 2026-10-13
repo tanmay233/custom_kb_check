@@ -83,8 +83,8 @@ def test_creation_save_reload_search_and_editing(tmp_path):
             expect(page.locator("#save-status")).to_have_text("✓ All changes saved")
 
             page.locator("#search-tab").click()
-            page.locator("#search-mode").select_option("keyword")
-            page.locator("#search-query").fill(nodes["Alice"])
+            page.locator("#search-mode").select_option("semantic")
+            page.locator("#search-query").fill("Alice Updated")
             page.locator("#search-submit").click()
             expect(page.locator(".result h3")).to_have_text("Alice Updated")
             expect(page.locator(".result-connections")).to_contain_text("WORKS_AT")

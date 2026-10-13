@@ -1,6 +1,6 @@
 # Graph Studio — Handoff
 
-Read this first when taking over the project. It is a local FastAPI + Kùzu knowledge-graph editor and search app. Users create graphs, node types, relationship definitions, nodes, and edges in a browser; saved data is persisted in Kùzu. Keyword search is offline; semantic/hybrid search uses a cached local 384-dimensional BGE model.
+Read this first when taking over the project. It is a local FastAPI + Kùzu knowledge-graph editor and search app. Users create graphs, node types, relationship definitions, nodes, and edges in a browser; saved data is persisted in Kùzu. Semantic name matching is offline; vector search uses a cached local 384-dimensional BGE model; Cypher search is read-only and graph-scoped.
 
 ## Run
 
@@ -20,7 +20,7 @@ app/
   main.py          FastAPI app, routes, startup/configuration
   models.py        Pydantic request/data validation
   store.py         Kùzu database and graph persistence
-  search.py        Keyword, vector, and hybrid search
+  search.py        Vector, lexical name, and read-only Cypher search
   embeddings.py    Lazy local FastEmbed model wrapper
   static/
     index.html     UI markup
@@ -38,7 +38,7 @@ STARTED.md         This handoff reference
 
 ## Data flow and API
 
-Browser draft → `app.js` → FastAPI routes in `main.py` → `GraphStore`/Kùzu. Search reads saved graph data; semantic search asks `EmbeddingService` for vectors, caches them in Kùzu, then `search.py` ranks results. All IDs are UUID strings. `GraphSave.revision` prevents stale-tab overwrites.
+Browser draft → `app.js` → FastAPI routes in `main.py` → `GraphStore`/Kùzu. Search reads saved graph data; vector search asks `EmbeddingService` for node-name vectors, caches them in Kùzu, and `search.py` ranks results. Semantic search compares name tokens without a model. Cypher is compiled from an allowlisted read-only subset and scoped to the selected graph. All IDs are UUID strings. `GraphSave.revision` prevents stale-tab overwrites.
 
 Routes in `app/main.py`:
 
@@ -94,7 +94,7 @@ Pydantic models are input/output contracts: `GraphCreate(name)`, `NodeType(id,na
 
 ### `app/search.py`
 
-- `search_graph(store, embeddings, graph_id, request)` — filter candidate nodes, optionally refresh missing/stale embeddings, run keyword/vector queries, combine hybrid results with reciprocal-rank fusion, and return results with scores/connections. Raises 422 for an invalid graph type and 503 if the local model cannot run.
+- `search_graph(store, embeddings, graph_id, request)` — filter candidate nodes, refresh missing/stale node-name embeddings for vector mode, calculate lexical name scores for semantic mode, or compile/execute a read-only graph-scoped Cypher query. Returns scores, descriptions, and connections for node modes; returns columns and rows for Cypher. Raises clear 4xx/409 errors for invalid queries or graph changes and 503 if the local vector model cannot run.
 
 ### `scripts/warm_model.py`
 
@@ -122,7 +122,7 @@ Core helpers: `api()` calls backend and normalizes errors; `busy()` serializes U
 
 Rendering: `renderSidebar()`, `renderStatus()`, `renderMapping()`, `render()`, and `renderInspector()` update the UI; `refreshGraphs()` and `openGraph()` load server/draft state; `switchTab()` changes creation/search tabs.
 
-Editing: `uniqueName()` validates names; form handlers create/update node types, relationship types, nodes, and edges; `resetRelTypeForm()`, `cancelMapping()`, `loadNode()`, and `loadEdge()` control editors. Save/reload/delete handlers persist or discard drafts. Search submits keyword/semantic/hybrid requests and renders ranked results.
+Editing: `uniqueName()` validates names; form handlers create/update node types, relationship types, nodes, and edges; `resetRelTypeForm()`, `cancelMapping()`, `loadNode()`, and `loadEdge()` control editors. Save/reload/delete handlers persist or discard drafts. Search submits vector, semantic, or Cypher requests and renders ranked nodes or a result table.
 
 ### `app/static/index.html` and `styles.css`
 

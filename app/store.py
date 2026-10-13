@@ -137,8 +137,6 @@ class GraphStore:
                 "MATCH (n:Entity) WHERE n.graph_id=$graph RETURN n.id AS id, n.embedding AS embedding, n.embedding_hash AS embedding_hash", {"graph": graph_id}
             )}
             old_nodes = {node["id"]: node for node in old["nodes"]}
-            old_types = {item["id"]: item["name"] for item in old["node_types"]}
-            new_types = {item["id"]: item["name"] for item in data["node_types"]}
             with self.transaction():
                 self.clear(graph_id)
                 for item in data["node_types"]:
@@ -147,7 +145,9 @@ class GraphStore:
                     self.query("CREATE (:RelationshipType {id:$id, graph_id:$graph, name:$name, from_type_id:$from_type_id, to_type_id:$to_type_id})", {**item, "graph": graph_id})
                 for node in data["nodes"]:
                     previous = old_nodes.get(node["id"])
-                    unchanged = previous == node and old_types.get(node["type_id"]) == new_types.get(node["type_id"])
+                    # Vector search embeds names only. Description/type edits do not
+                    # invalidate them; search checks the model/input-version hash.
+                    unchanged = previous is not None and previous["name"] == node["name"]
                     cached = cache.get(node["id"], {}) if unchanged else {}
                     self.query(
                         "CREATE (:Entity {id:$id, graph_id:$graph, type_id:$type_id, name:$name, description:$description, embedding:$embedding, embedding_hash:$hash})",

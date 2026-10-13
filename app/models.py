@@ -81,6 +81,14 @@ class GraphSave(StrictModel):
 
 class SearchRequest(StrictModel):
     query: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=2000)]
-    mode: Literal["keyword", "semantic", "hybrid"] = "hybrid"
-    limit: int = Field(default=10, ge=1, le=100)
+    mode: Literal["vector", "semantic", "cypher"] = "vector"
+    limit: int = Field(default=5, ge=1, le=100, strict=True)
     node_type_id: UUID | None = None
+
+    @model_validator(mode="after")
+    def valid_search(self):
+        if self.mode == "cypher" and self.node_type_id is not None:
+            raise ValueError("Cypher filters may use node names, node UUIDs, and relationship names only; node_type_id is not supported.")
+        if self.mode == "cypher" and "limit" not in self.model_fields_set:
+            self.limit = 100
+        return self

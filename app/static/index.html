@@ -26,7 +26,7 @@
       <div class="welcome-art">○──○<br> ╲ │<br> ○</div>
       <span class="eyebrow">FROM INFORMATION TO CONNECTIONS</span>
       <h1>Your knowledge, connected.</h1>
-      <p>Create a graph, define its structure, and bring your ideas to life.<br>Explore the connections with local semantic search.</p>
+      <p>Create a graph, define its structure, and bring your ideas to life.<br>Explore the connections with local vector and name search.</p>
       <button id="first-graph" class="primary">＋ Create your first graph</button>
       <div class="welcome-steps"><span>01 · Define types</span><span>02 · Add knowledge</span><span>03 · Discover connections</span></div>
     </section>
@@ -65,7 +65,7 @@
               <form id="node-form" class="stack">
                 <label>Node type<select id="node-type" required></select></label>
                 <label>Node name<input id="node-name" placeholder="e.g. Ada Lovelace" maxlength="120" required></label>
-                <label>Description <span class="optional">optional</span><textarea id="node-description" placeholder="Add context to improve semantic search…" maxlength="10000" rows="3"></textarea></label>
+                <label>Description <span class="optional">optional</span><textarea id="node-description" placeholder="Add context to display with this node’s search results…" maxlength="10000" rows="3"></textarea></label>
                 <button class="secondary" type="submit">＋ Create node</button>
               </form>
             </section>
@@ -115,13 +115,24 @@
       </section>
 
       <section id="search-page" role="tabpanel" aria-labelledby="search-tab" hidden>
-        <div class="search-intro"><span class="eyebrow">EXPLORE YOUR KNOWLEDGE</span><h2>Find meaning. Follow connections.</h2><p>Search saved nodes by name, UUID, or meaning, then explore their relationships.</p></div>
+        <div class="search-intro"><span class="eyebrow">EXPLORE YOUR KNOWLEDGE</span><h2>Find meaning. Follow connections.</h2><p>Find saved nodes by name, meaning, or a read-only Cypher query, then explore their relationships.</p></div>
         <section class="card search-card">
           <form id="search-form" class="stack">
-            <label for="search-query">What are you looking for?</label>
-            <div class="search-input"><input id="search-query" placeholder="e.g. people working on renewable energy" maxlength="2000" required><button id="search-submit" class="primary" type="submit">Search graph →</button></div>
-            <div class="search-options"><label>Search method<select id="search-mode"><option value="hybrid">Hybrid · meaning + keywords</option><option value="semantic">Semantic · vector similarity</option><option value="keyword">Keyword · name, UUID & text</option></select></label><label>Node type<select id="search-type"></select></label><label>Results<input id="search-limit" type="number" value="10" min="1" max="100" required></label></div>
-            <p class="hint">Semantic search uses local 384-dimensional embeddings and cosine similarity in Kùzu. The first semantic search downloads the model. Hybrid combines semantic and keyword rankings.</p>
+            <label for="search-query" id="search-query-label">What are you looking for?</label>
+            <div class="search-input"><textarea id="search-query" rows="2" placeholder="e.g. people working on renewable energy" maxlength="2000" required></textarea><button id="search-submit" class="primary" type="submit">Search nodes →</button></div>
+            <div id="search-options" class="search-options"><label id="search-mode-field">Search method<select id="search-mode"><option value="vector">Vector · node-name embeddings</option><option value="semantic">Semantic · word/token-level name similarity</option><option value="cypher">Cypher · read-only query</option></select></label><label id="search-type-field">Node type<select id="search-type"></select></label><label id="search-limit-field">Results<input id="search-limit" type="number" value="5" min="1" max="100" step="1" required></label></div>
+            <p id="search-help" class="hint">Vector search embeds node names with the local BGE model. It downloads lazily on first use and caches the model for later searches.</p>
+            <details id="search-cypher-help" class="hint" hidden><summary>Cypher examples and supported syntax</summary>
+              <p>Use <code>Entity</code> for nodes and <code>Link</code> for relationships. The selected graph is scoped automatically. Filter only by node <code>name</code>, <code>id</code>/<code>uuid</code>, or relationship <code>name</code>. Descriptions are included in results.</p>
+              <pre>MATCH (n:Entity) WHERE lower(n.name) CONTAINS 'alice'
+RETURN n.id, n.name, n.description</pre>
+              <pre>MATCH (n:Entity {id: 'paste-node-uuid-here'}) RETURN n</pre>
+              <pre>MATCH (a:Entity)-[r:Link]-&gt;(b:Entity)
+WHERE r.name = 'WORKS_AT'
+RETURN a.name AS source, r.name AS relationship, b.name AS target</pre>
+              <p>Supported: one MATCH, fixed-length paths, WHERE, RETURN, DISTINCT, ORDER BY, and LIMIT. Mutations, procedures, aggregates, comments, and subqueries are not supported. Queries have a 5-second execution limit.</p>
+            </details>
+            <p id="search-error" class="error-text" role="alert" aria-live="assertive"></p>
           </form>
         </section>
         <div id="search-draft-warning" class="draft-warning" hidden>You have unsaved changes. Search uses the last saved version of this graph.</div>
